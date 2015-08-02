@@ -1,0 +1,230 @@
+/**
+ * Created with IntelliJ IDEA.
+ * User: Administrator
+ * Date: 14-12-24
+ * Time: 上午12:07
+ * To change this template use File | Settings | File Templates.
+ */
+
+target('default': 'The default target') {
+    def webInf = "${basedir}/web-app/WEB-INF"
+    ant.delete(dir:"${webInf}/classes")
+    ant.delete(file:webXmlFile.absolutePath, failonerror:false)
+    ant.delete(dir:"${projectWorkDir}/gspcompile", failonerror:false)
+    ant.delete(dir:"${webInf}/lib")
+    ant.delete(dir:"${basedir}/web-app/plugins")
+    ant.delete(dir:classesDirPath)
+    ant.delete(dir:pluginClassesDirPath, failonerror:false)
+    ant.delete(dir:resourcesDirPath)
+    ant.delete(dir:testDirPath)
+    ant.delete(failonerror:false, includeemptydirs: true) {
+        fileset(dir:grailsSettings.projectWorkDir) {
+            include name:"*.resolve"
+        }
+    }
+
+
+    def suffix = args["suffix"]
+
+    def type = args["type"]
+    if (type) {
+        lastType = type
+    }
+
+    def artifactPath = args["path"]
+
+    ant.mkdir(dir: "${basedir}/${artifactPath}")
+    if (pkg.startsWith("~")) {
+        pkg = pkg.replace("~", createRootPackage())
+    }
+
+
+    ant.replace(file: artifactFile,
+            token: "@artifact.name@", value: "${className}${suffix}")
+    if (pkg) {
+        ant.replace(file: artifactFile, token: "@artifact.package@", value: "package ${pkg}\n\n")
+    }
+    else {
+        ant.replace(file: artifactFile, token: "@artifact.package@", value: "")
+    }
+
+    if (args["superClass"]) {
+        ant.replace(file: artifactFile, token: "@artifact.superclass@", value: args["superClass"])
+    }
+    ant.replace(file: artifactFile, token: "@artifact.testclass@", value: "${className}${type}")
+
+
+    touch(file: metadataFile)
+
+    ant.move(
+            file: "${basedir}/GrailsPlugin.groovy",
+            tofile: "${basedir}/${pluginName}GrailsPlugin.groovy",
+            overwrite: true)
+
+    ant.replace(dir:"${basedir}") {
+        include(name: "*GrailsPlugin.groovy")
+        include(name: "scripts/*")
+        replacefilter(token: "@plugin.name@", value: pluginName)
+        replacefilter(token: "@plugin.title@", value: GrailsNameUtils.getNaturalName(pluginName) + " Plugin")
+        replacefilter(token: "@plugin.short.name@", value: GrailsNameUtils.getScriptName(pluginName))
+        replacefilter(token: "@plugin.version@", value: grailsAppVersion ?: "0.1")
+        replacefilter(token: "@grails.version@", value: pluginGrailsVersion)
+    }
+
+    ant.input(message:"$type name not specified. Please enter:",
+            addProperty:"grails.app.name")
+
+    ant.taskdef(name:"groovydoc", classname:"org.codehaus.groovy.ant.Groovydoc")
+
+    ant.copy file: pluginDescriptor, todir: tmpDir, overwrite: true
+
+    try {
+        ant.groovydoc(destdir:groovydocDir, sourcepath:sourcePath, use:"true",
+                windowtitle:grailsAppName,'private':"true") {
+            // Apply external API links
+            apiLinks?.each { pkg,href ->
+                if (pkg && href) {
+                    link(packages:"${pkg}.", href:"${href}")
+                }
+            }
+        }
+    }
+    catch(Exception e) {
+        event("StatusError", ["Error generating groovydoc: ${e.message}"])
+    }
+
+    try {
+        ant.javadoc(access:"protected",
+                destdir:javadocDir,
+                encoding:docEncoding,
+                classpathref:"grails.compile.classpath",
+                use:"yes",
+                windowtitle:grailsAppName,
+                docencoding:docEncoding,
+                charset:docEncoding,
+                source:docSourceLevel,
+                useexternalfile:"yes",
+                breakiterator:"true",
+                linksource:"yes",
+                maxmemory:"128m",
+                failonerror:false,
+                sourcepath:javaDir.absolutePath) {
+            for (i in links) {
+                link(href:i)
+            }
+        }
+    }
+    catch (Exception e) {
+        event("StatusError", ["Error generating javadoc: ${e.message}"])
+        // ignore, empty src/java directory
+    }
+
+    def guideDir = new File(grailsSettings.baseDir, "src/docs/guide")
+    if (guideDir.exists()) {
+        def outDir = new File(guideDir.parentFile, "migratedGuide")
+        def migrator = new LegacyDocMigrator(guideDir, outDir, config.grails.doc.alias)
+        migrator.migrate()
+
+        grailsConsole.updateStatus "Migrated user guide at ${outDir.path}"
+    }
+
+    ant.sequential {
+        mkdir(dir: "${basedir}/src")
+        mkdir(dir: "${basedir}/src/java")
+        mkdir(dir: "${basedir}/src/groovy")
+        mkdir(dir: "${basedir}/grails-app")
+        mkdir(dir: "${basedir}/grails-app/controllers")
+        mkdir(dir: "${basedir}/grails-app/services")
+        mkdir(dir: "${basedir}/grails-app/domain")
+        mkdir(dir: "${basedir}/grails-app/taglib")
+        mkdir(dir: "${basedir}/grails-app/utils")
+        mkdir(dir: "${basedir}/grails-app/views")
+        mkdir(dir: "${basedir}/grails-app/views/layouts")
+        mkdir(dir: "${basedir}/grails-app/i18n")
+        mkdir(dir: "${basedir}/grails-app/conf")
+        mkdir(dir: "${basedir}/test")
+        mkdir(dir: "${basedir}/test/unit")
+        mkdir(dir: "${basedir}/test/integration")
+        mkdir(dir: "${basedir}/scripts")
+        mkdir(dir: "${basedir}/web-app")
+        mkdir(dir: "${basedir}/web-app/js")
+        mkdir(dir: "${basedir}/web-app/css")
+        mkdir(dir: "${basedir}/web-app/images")
+        mkdir(dir: "${basedir}/web-app/META-INF")
+        mkdir(dir: "${basedir}/lib")
+        mkdir(dir: "${basedir}/grails-app/conf/spring")
+        mkdir(dir: "${basedir}/grails-app/conf/hibernate")
+    }
+
+    touch(file: "${basedir}/grails-app/i18n/messages.properties")
+    ant.path(id: "grails.runtime.classpath", runtimeClasspath)
+
+    if (grailsSettings.grailsHome) {
+        ant.property(file: "${grailsHome}/build.properties")
+    }
+    else {
+        ant.property(resource: "grails.build.properties")
+    }
+
+    try {
+        ant.copy(todir: dir) {
+            javaresource(name: src)
+        }
+
+        // Now unjar it, excluding the META-INF directory.
+        ant.unjar(dest: dir, src: "${dir}/${src}", overwrite: overwriteOption) {
+            patternset {
+                exclude(name: "META-INF/**")
+            }
+        }
+    }
+    finally {
+        // Don't need the JAR file any more, so remove it.
+        ant.delete(file: "${dir}/${src}", failonerror:false)
+    }
+
+
+    ant.path(id: "grails.test.classpath", testClasspath)
+    ant.taskdef (name: 'testc', classname:'org.codehaus.groovy.grails.test.compiler.GrailsTestCompiler', classpathref:"grails.test.classpath")
+
+    ant.mkdir(dir: dest.path)
+    try {
+        def classpathId = "grails.test.classpath"
+        ant."${ type.name == 'unit' ? 'testc' : 'groovyc'}"(destdir: dest, classpathref: classpathId,
+                verbose: grailsSettings.verboseCompile, listfiles: grailsSettings.verboseCompile) {
+            javac(classpathref: classpathId, debug: "yes")
+            src(path: source)
+        }
+
+    }
+    catch (e) {
+        grailsConsole.error "Compilation error compiling [$type.name] tests: ${e.cause ? e.cause.message : e.message}", e.cause ? e.cause : e
+        exit 1
+    }
+
+    war()
+
+    ant.copy(todir: new File(grailsSettings.testClassesDir, "integration").path) {
+        fileset(dir: "${basedir}", includes: metadataFile.name)
+    }
+    ant.copy(todir: grailsSettings.testClassesDir.path, failonerror: false) {
+        fileset(dir: "${basedir}/grails-app/conf", includes: "**", excludes: "*.groovy, log4j*, hibernate, spring")
+        fileset(dir: "${basedir}/grails-app/conf/hibernate", includes: "**/**")
+        fileset(dir: "${grailsSettings.sourceDir}/java") {
+            include(name: "**/**")
+            exclude(name: "**/*.java")
+        }
+        fileset(dir: "${testSourceDir}/unit") {
+            include(name: "**/**")
+            exclude(name: "**/*.java")
+            exclude(name: "**/*.groovy")
+        }
+        fileset(dir: "${testSourceDir}/integration") {
+            include(name: "**/**")
+            exclude(name: "**/*.java")
+            exclude(name: "**/*.groovy")
+        }
+    }
+
+
+}
